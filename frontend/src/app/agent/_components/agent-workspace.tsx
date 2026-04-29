@@ -24,6 +24,7 @@ import {
   Square,
   Terminal,
   Trash2,
+  X,
 } from "lucide-react";
 
 type WebviewElement = HTMLElement & {
@@ -138,6 +139,7 @@ export function AgentWorkspace() {
   const [loadingModels, setLoadingModels] = useState(true);
   const [modelFilter, setModelFilter] = useState("");
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [isMultiline, setIsMultiline] = useState(false);
   const [browserUrl, setBrowserUrl] = useState("https://duckduckgo.com");
   const [browserInput, setBrowserInput] = useState("https://duckduckgo.com");
@@ -757,7 +759,14 @@ export function AgentWorkspace() {
             </div>
           </div>
 
-          <button className="agent-toolbar-button" type="button" title="Terminal drawer">
+          <button
+            className={`agent-toolbar-button ${
+              terminalOpen ? "bg-[var(--agent-muted-bg)] font-bold text-[var(--agent-fg)]" : ""
+            }`}
+            type="button"
+            onClick={() => setTerminalOpen((value) => !value)}
+            title="Terminal drawer"
+          >
             <Terminal className="size-3.5" /> Terminal
           </button>
           <button
@@ -791,6 +800,10 @@ export function AgentWorkspace() {
                 {running ? <WorkingRow status={status} /> : null}
               </div>
             </div>
+
+            {terminalOpen ? (
+              <TerminalDrawer cwd={agentCwd} onClose={() => setTerminalOpen(false)} />
+            ) : null}
 
             <form
               onSubmit={sendMessage}
@@ -1142,6 +1155,296 @@ function WorkingRow({ status }: { status: string }) {
         <Loader2 className="size-4 animate-spin" />
       </div>
       <div className="pt-1.5">Pi agent is {status}…</div>
+    </div>
+  );
+}
+
+type TerminalLine = {
+  id: string;
+  kind: "out" | "err" | "error" | "input" | "info";
+  text: string;
+};
+
+function TerminalDrawer({ cwd, onClose }: { cwd: string; onClose: () => void }) {
+  const [lines, setLines] = useState<TerminalLine[]>([]);
+  const [command, setCommand] = useState("");
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const outputRef = useRef<HTMLPreElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const sessionId = useMemo(() => `terminal:${cwd || "default"}`, [cwd]);
+  const sessionIdRef = useRef(sessionId);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const appendLines = useCallback((next: TerminalLine[]) => {
+    if (next.length === 0) return;
+    setLines((current) => {
+      const combined = [...current, ...next];
+      if (combined.length > 5000) return combined.slice(combined.length - 5000);
+      return combined;
+    });
+  }, []);
+
+  const splitChunkLines = useCallback(
+    (kind: TerminalLine["kind"], text: string): TerminalLine[] => {
+      if (!text) return [];
+      const parts = text.split(/\r?\n/);
+      // Keep trailing empty string only when text ended with newline
+      const result: TerminalLine[] = [];
+      for (let i = 0; i < parts.length; i += 1) {
+        const piece = parts[i];
+        if (i === parts.length - 1 && piece === "") continue;
+        result.push({
+          id: `${kind}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${i}`,
+          kind,
+          text: piece,
+        });
+      }
+      return result;
+    },
+    [],
+  );
+
+  const openStream = useCallback(
+    async (input: string) => {
+      const controller = new AbortController();
+      // Cancel previous stream if still open (we'll re-open with new input)
+      abortRef.current?.abort();
+      abortRef.current = controller;
+      try {
+        const response = await fetch("/api/agent/terminal", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: sessionIdRef.current, cwd, input }),
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          appendLines([
+            {
+              id: `error-${Date.now().toString(36)}`,
+              kind: "error",
+              text: payload.error || `Terminal request failed: ${response.status}`,
+            },
+          ]);
+          return;
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split("\n\n");
+          buffer = chunks.pop() || "";
+          for (const chunk of chunks) {
+            const dataLine = chunk.split("\n").find((entry) => entry.startsWith("data: "));
+            if (!dataLine) continue;
+            try {
+              const payload = JSON.parse(dataLine.slice(6)) as
+                | { type: "out" | "err"; text: string }
+                | { type: "error"; text: string }
+                | { type: "exit"; code: number | null; signal: string | null }
+                | { type: "ready"; sessionId: string };
+              if (payload.type === "out" || payload.type === "err") {
+                const kind = payload.type === "out" ? "out" : "err";
+                appendLines(splitChunkLines(kind, payload.text));
+              } else if (payload.type === "error") {
+                appendLines([
+                  {
+                    id: `error-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+                    kind: "error",
+                    text: payload.text,
+                  },
+                ]);
+              } else if (payload.type === "exit") {
+                appendLines([
+                  {
+                    id: `info-${Date.now().toString(36)}`,
+                    kind: "info",
+                    text: `[shell exited code=${payload.code ?? "?"}${
+                      payload.signal ? ` signal=${payload.signal}` : ""
+                    }]`,
+                  },
+                ]);
+              }
+            } catch {
+              /* ignore malformed chunk */
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as { name?: string })?.name === "AbortError") return;
+        appendLines([
+          {
+            id: `error-${Date.now().toString(36)}`,
+            kind: "error",
+            text: err instanceof Error ? err.message : "terminal stream failed",
+          },
+        ]);
+      }
+    },
+    [appendLines, cwd, splitChunkLines],
+  );
+
+  // On mount and when sessionId changes, close the old session, reset, and open a fresh stream.
+  useEffect(() => {
+    const previous = sessionIdRef.current;
+    sessionIdRef.current = sessionId;
+    if (previous && previous !== sessionId) {
+      void fetch("/api/agent/terminal/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: previous }),
+      }).catch(() => undefined);
+    }
+    queueMicrotask(() => {
+      setLines([]);
+      void openStream("");
+    });
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, [sessionId]);
+
+  // Auto-scroll on new content
+  useEffect(() => {
+    const node = outputRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [lines]);
+
+  // Focus input on open
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const submitCommand = useCallback(
+    (raw: string) => {
+      const text = raw;
+      appendLines([
+        {
+          id: `input-${Date.now().toString(36)}`,
+          kind: "input",
+          text: `$ ${text}`,
+        },
+      ]);
+      if (text.trim()) {
+        setHistory((current) => {
+          const next = [...current, text];
+          if (next.length > 50) return next.slice(next.length - 50);
+          return next;
+        });
+      }
+      setHistoryIndex(null);
+      setDraft("");
+      void openStream(text);
+    },
+    [appendLines, openStream],
+  );
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const value = command;
+      setCommand("");
+      submitCommand(value);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      if (history.length === 0) return;
+      event.preventDefault();
+      setHistoryIndex((current) => {
+        if (current === null) {
+          setDraft(command);
+          const next = history.length - 1;
+          setCommand(history[next] ?? "");
+          return next;
+        }
+        const next = Math.max(0, current - 1);
+        setCommand(history[next] ?? "");
+        return next;
+      });
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      if (historyIndex === null) return;
+      event.preventDefault();
+      const next = historyIndex + 1;
+      if (next >= history.length) {
+        setHistoryIndex(null);
+        setCommand(draft);
+      } else {
+        setHistoryIndex(next);
+        setCommand(history[next] ?? "");
+      }
+    }
+  };
+
+  return (
+    <div
+      className="flex shrink-0 flex-col border-t border-[var(--agent-border)] bg-[var(--agent-card)]"
+      style={{ height: "33%" }}
+    >
+      <div className="flex h-8 shrink-0 items-center justify-between border-b border-[var(--agent-border)] bg-[var(--agent-bg)] px-3">
+        <div className="flex items-center gap-2 text-xs text-[var(--agent-muted)]">
+          <Terminal className="size-3.5" />
+          <span className="font-medium text-[var(--agent-fg)]">Terminal</span>
+          <span className="truncate font-mono text-[11px]">{cwd}</span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex size-6 items-center justify-center rounded text-[var(--agent-muted)] hover:bg-[var(--agent-muted-bg)] hover:text-[var(--agent-fg)]"
+          title="Close terminal"
+          aria-label="Close terminal"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <pre
+        ref={outputRef}
+        className="m-0 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-[var(--agent-bg)] px-3 py-2 font-mono text-[11px] leading-[1.35] text-[var(--agent-fg)]"
+      >
+        {lines.map((line) => (
+          <span
+            key={line.id}
+            className={
+              line.kind === "err"
+                ? "block text-red-500"
+                : line.kind === "error"
+                  ? "block text-red-600"
+                  : line.kind === "input"
+                    ? "block text-[var(--agent-muted)]"
+                    : line.kind === "info"
+                      ? "block italic text-[var(--agent-muted)]"
+                      : "block"
+            }
+          >
+            {line.text || "\u00A0"}
+          </span>
+        ))}
+      </pre>
+      <div className="flex shrink-0 items-center gap-2 border-t border-[var(--agent-border)] bg-[var(--agent-bg)] px-3 py-1.5">
+        <span className="font-mono text-[11px] text-[var(--agent-muted)]">$</span>
+        <input
+          ref={inputRef}
+          value={command}
+          onChange={(event) => {
+            setCommand(event.target.value);
+            if (historyIndex !== null) setHistoryIndex(null);
+          }}
+          onKeyDown={handleKeyDown}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          placeholder="Run a command…"
+          className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-[var(--agent-fg)] outline-none placeholder:text-[var(--agent-muted)]"
+          aria-label="Terminal input"
+        />
+      </div>
     </div>
   );
 }
