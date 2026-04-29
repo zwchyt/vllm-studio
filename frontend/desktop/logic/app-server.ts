@@ -94,6 +94,7 @@ export async function startFrontendServer(): Promise<ServerHandle> {
       HOSTNAME: "127.0.0.1",
       NEXT_TELEMETRY_DISABLED: "1",
       VLLM_STUDIO_DATA_DIR: DESKTOP_CONFIG.userDataDir,
+      VLLM_STUDIO_AGENT_CWD: process.env.VLLM_STUDIO_AGENT_CWD || process.cwd(),
     },
   });
 

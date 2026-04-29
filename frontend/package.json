@@ -30,6 +30,7 @@
     "desktop:pack": "npm run desktop:build && electron-builder --dir --config desktop/electron-builder.yml"
   },
   "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.70.6",
     "electron-updater": "^6.6.2",
     "framer-motion": "^12.24.10",
     "lucide-react": "^0.561.0",

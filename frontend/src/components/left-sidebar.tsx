@@ -11,6 +11,7 @@ import {
   Sun,
   Moon,
   Square,
+  Bot,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import { useStopModel } from "@/hooks/use-stop-model";
 
 const tabs = [
   { href: "/", label: "Status", icon: BarChart3 },
+  { href: "/agent", label: "Agent", icon: Bot },
   { href: "/usage", label: "Usage", icon: Database },
   { href: "/recipes", label: "Models", icon: HardDrive },
   { href: "/logs", label: "Server", icon: Server },
