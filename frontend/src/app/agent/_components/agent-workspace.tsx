@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
@@ -107,8 +108,6 @@ type PaneState = {
   runtimeSessionId: string;
 };
 
-
-
 export function AgentWorkspace() {
   const [models, setModels] = useState<AgentModel[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
@@ -153,6 +152,10 @@ export function AgentWorkspace() {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const isElectron = typeof window !== "undefined" && /electron/i.test(navigator.userAgent);
   const desktopBridge = useMemo<DesktopBridge | null>(() => getDesktopBridge(), []);
+  const searchParams = useSearchParams();
+  // Track which (project, session) URL params we've already consumed so
+  // navigation back/forward doesn't re-trigger session replays.
+  const handledNavRef = useRef<string>("");
 
   const activeModel = useMemo(
     () => models.find((model) => model.id === selectedModel),
@@ -206,7 +209,10 @@ export function AgentWorkspace() {
   // In dev (iframe) we can only do limited operations because of cross-origin
   // restrictions; we surface a helpful error so the model can adapt.
   const runBrowserCommand = useCallback(
-    async (verb: string, payload: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; error?: string }> => {
+    async (
+      verb: string,
+      payload: Record<string, unknown>,
+    ): Promise<{ ok: boolean; data?: unknown; error?: string }> => {
       const webview = webviewRef.current;
       if (isElectron && webview && typeof webview.executeJavaScript === "function") {
         try {
@@ -223,11 +229,15 @@ export function AgentWorkspace() {
               return { ok: true, data: { url: webview.getURL(), title: webview.getTitle() } };
             }
             case "get-text": {
-              const text = (await webview.executeJavaScript("document.body && document.body.innerText")) as string | null;
+              const text = (await webview.executeJavaScript(
+                "document.body && document.body.innerText",
+              )) as string | null;
               return { ok: true, data: { text: text ?? "" } };
             }
             case "get-html": {
-              const html = (await webview.executeJavaScript("document.documentElement && document.documentElement.outerHTML")) as string | null;
+              const html = (await webview.executeJavaScript(
+                "document.documentElement && document.documentElement.outerHTML",
+              )) as string | null;
               return { ok: true, data: { html: html ?? "" } };
             }
             case "screenshot": {
@@ -239,19 +249,30 @@ export function AgentWorkspace() {
               if (!selector) return { ok: false, error: "selector required" };
               const script = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return { found: false }; (el).click(); return { found: true }; })()`;
               const result = (await webview.executeJavaScript(script, true)) as { found: boolean };
-              return { ok: result.found, data: result, error: result.found ? undefined : "selector not found" };
+              return {
+                ok: result.found,
+                data: result,
+                error: result.found ? undefined : "selector not found",
+              };
             }
             case "scroll": {
               const deltaY = Number(payload.deltaY ?? 0);
               await webview.executeJavaScript(`window.scrollBy(0, ${deltaY})`);
-              return { ok: true, data: { deltaY, scrollY: await webview.executeJavaScript("window.scrollY") } };
+              return {
+                ok: true,
+                data: { deltaY, scrollY: await webview.executeJavaScript("window.scrollY") },
+              };
             }
             case "fill": {
               const selector = String(payload.selector || "");
               const value = String(payload.value ?? "");
               const script = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return { found: false }; el.focus(); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return { found: true }; })()`;
               const result = (await webview.executeJavaScript(script, true)) as { found: boolean };
-              return { ok: result.found, data: result, error: result.found ? undefined : "selector not found" };
+              return {
+                ok: result.found,
+                data: result,
+                error: result.found ? undefined : "selector not found",
+              };
             }
             default:
               return { ok: false, error: `Unsupported browser verb: ${verb}` };
@@ -296,7 +317,11 @@ export function AgentWorkspace() {
     const source = new EventSource("/api/agent/browser/events");
     source.onmessage = async (event) => {
       try {
-        const command = JSON.parse(event.data) as { id: string; verb: string; payload: Record<string, unknown> };
+        const command = JSON.parse(event.data) as {
+          id: string;
+          verb: string;
+          payload: Record<string, unknown>;
+        };
         const result = await runBrowserCommand(command.verb, command.payload);
         await fetch("/api/agent/browser/result", {
           method: "POST",
@@ -373,6 +398,26 @@ export function AgentWorkspace() {
   const persistSessionsCollapsed = useCallback((value: boolean) => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(SESSIONS_COLLAPSED_KEY, value ? "1" : "0");
+  }, []);
+
+  const toggleBrowserOpen = useCallback(() => {
+    setBrowserOpen((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(COMPUTER_BROWSER_OPEN_KEY, next ? "1" : "0");
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleFilesOpen = useCallback(() => {
+    setFilesOpen((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(COMPUTER_FILES_OPEN_KEY, next ? "1" : "0");
+      }
+      return next;
+    });
   }, []);
 
   const toggleBrowserTool = useCallback(() => {
@@ -453,6 +498,41 @@ export function AgentWorkspace() {
     },
     [persistSelectedProjectId],
   );
+
+  // Consume `?project=...&session=...` URL params from the new top-level
+  // sidebar nav. When the linked project is already loaded, switch to it; if
+  // a session id is provided, hand it to the focused pane's loader once
+  // registered. handledNavRef guards against re-replay on re-renders.
+  useEffect(() => {
+    if (!searchParams) return;
+    const projectParam = searchParams.get("project");
+    const sessionParam = searchParams.get("session");
+    if (!projectParam && !sessionParam) return;
+    const key = `${projectParam ?? ""}|${sessionParam ?? ""}`;
+    if (handledNavRef.current === key) return;
+
+    if (projectParam) {
+      const target = projects.find((entry) => entry.id === projectParam);
+      if (!target) return; // wait for projects to load
+      if (selectedProjectId !== target.id) {
+        selectProject(target);
+      }
+    }
+    handledNavRef.current = key;
+
+    if (sessionParam) {
+      const tryLoad = (attempt: number) => {
+        const loader = paneLoadersRef.current.get(focusedPaneId);
+        if (loader) {
+          loader(sessionParam);
+        } else if (attempt < 30) {
+          setTimeout(() => tryLoad(attempt + 1), 50);
+        }
+      };
+      // Defer so a freshly selected project has a tick to reset panes.
+      setTimeout(() => tryLoad(0), 50);
+    }
+  }, [searchParams, projects, selectedProjectId, selectProject, focusedPaneId]);
 
   const addProjectFromPath = useCallback(
     async (rawPath: string): Promise<ProjectEntry> => {
@@ -559,7 +639,6 @@ export function AgentWorkspace() {
     },
     [persistSelectedProjectId, projects, selectedProjectId],
   );
-
 
   function normalizeBrowserInput(raw: string): string {
     const value = raw.trim();
@@ -671,6 +750,13 @@ export function AgentWorkspace() {
           running={false}
         />
 
+        <ModelPicker
+          models={models}
+          selectedModel={selectedModel}
+          onSelect={setSelectedModel}
+          loading={loadingModels}
+        />
+
         <button
           type="button"
           onClick={newThreadInFocusedPane}
@@ -689,9 +775,9 @@ export function AgentWorkspace() {
               ? "border-(--border) bg-(--surface) text-(--fg)"
               : "border-transparent text-(--dim) hover:text-(--fg) hover:bg-(--surface)"
           }`}
-          title="Toggle browser"
+          title="Toggle computer"
         >
-          Browser
+          Computer
         </button>
       </header>
 
@@ -781,9 +867,7 @@ export function AgentWorkspace() {
                             });
                             paneLoadersRef.current.delete(paneId);
                             if (focusedPaneId === paneId) {
-                              const remaining = collectLeaves(layout).filter(
-                                (id) => id !== paneId,
-                              );
+                              const remaining = collectLeaves(layout).filter((id) => id !== paneId);
                               if (remaining[0]) setFocusedPaneId(remaining[0]);
                             }
                           }
@@ -835,110 +919,120 @@ export function AgentWorkspace() {
 
         {rightPanelOpen ? (
           <aside className="hidden w-[440px] shrink-0 flex-col border-l border-(--border) bg-(--bg) xl:flex">
-            <div
-              className="flex shrink-0 flex-col"
-              style={{ height: `${rightTopHeightPct}%` }}
-            >
-              <div className="flex h-9 shrink-0 items-center justify-between border-b border-(--border) px-3 text-xs text-(--dim)">
-                <span className="font-medium uppercase tracking-wide">Browser</span>
-                <button
-                  type="button"
-                  onClick={() => setRightPanelOpen(false)}
-                  className="rounded p-1 hover:bg-(--surface) hover:text-(--fg)"
-                  title="Close"
-                  aria-label="Close browser"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <form
-                onSubmit={submitBrowserUrl}
-                className="flex shrink-0 items-center gap-1 border-b border-(--border) px-2 py-1.5"
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-(--border) px-3 text-xs text-(--dim)">
+              <span className="font-medium uppercase tracking-wide">Computer</span>
+              <button
+                type="button"
+                onClick={() => setRightPanelOpen(false)}
+                className="rounded p-1 hover:bg-(--surface) hover:text-(--fg)"
+                title="Close"
+                aria-label="Close computer"
               >
-                <button
-                  type="button"
-                  onClick={browserBack}
-                  className="rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
-                  title="Back"
-                  aria-label="Back"
-                >
-                  <ArrowLeft className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={browserForward}
-                  className="rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
-                  title="Forward"
-                  aria-label="Forward"
-                >
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={browserReload}
-                  className="rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
-                  title="Reload"
-                  aria-label="Reload"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                </button>
-                <input
-                  value={browserInput}
-                  onChange={(event) => setBrowserInput(event.target.value)}
-                  spellCheck={false}
-                  placeholder="Search or enter URL"
-                  className="min-w-0 flex-1 rounded border border-(--border) bg-(--surface) px-2 py-1 font-mono text-[11px] text-(--fg) outline-none placeholder:text-(--dim)"
-                  aria-label="Browser address"
-                />
-              </form>
-              <div className="min-h-0 flex-1 bg-white">
-                {isElectron ? (
-                  <webview
-                    ref={(node) => {
-                      webviewRef.current = (node as unknown as WebviewElement) ?? null;
-                    }}
-                    src={browserUrl}
-                    allowpopups={true}
-                    className="size-full"
-                    style={{ width: "100%", height: "100%", display: "flex" }}
-                  />
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <section className={`flex min-h-0 flex-col ${browserOpen ? "flex-1" : "shrink-0"}`}>
+              <button
+                type="button"
+                onClick={toggleBrowserOpen}
+                aria-expanded={browserOpen}
+                className="flex h-9 shrink-0 items-center gap-2 border-b border-(--border) px-3 text-xs text-(--dim) hover:text-(--fg)"
+              >
+                {browserOpen ? (
+                  <ChevronDown className="h-3.5 w-3.5" />
                 ) : (
-                  <iframe
-                    ref={iframeRef}
-                    src={browserUrl}
-                    className="size-full"
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-                    title="Agent browser"
-                  />
+                  <ChevronRight className="h-3.5 w-3.5" />
                 )}
-              </div>
-            </div>
+                <span className="font-medium uppercase tracking-wide">Browser</span>
+              </button>
+              {browserOpen ? (
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <form
+                    onSubmit={submitBrowserUrl}
+                    className="flex shrink-0 items-center gap-1 border-b border-(--border) px-2 py-1.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={browserBack}
+                      className="rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
+                      title="Back"
+                      aria-label="Back"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={browserForward}
+                      className="rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
+                      title="Forward"
+                      aria-label="Forward"
+                    >
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={browserReload}
+                      className="rounded p-1 text-(--dim) hover:bg-(--surface) hover:text-(--fg)"
+                      title="Reload"
+                      aria-label="Reload"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </button>
+                    <input
+                      value={browserInput}
+                      onChange={(event) => setBrowserInput(event.target.value)}
+                      spellCheck={false}
+                      placeholder="Search or enter URL"
+                      className="min-w-0 flex-1 rounded border border-(--border) bg-(--surface) px-2 py-1 font-mono text-[11px] text-(--fg) outline-none placeholder:text-(--dim)"
+                      aria-label="Browser address"
+                    />
+                  </form>
+                  <div className="min-h-0 flex-1 bg-white">
+                    {isElectron ? (
+                      <webview
+                        ref={(node) => {
+                          webviewRef.current = (node as unknown as WebviewElement) ?? null;
+                        }}
+                        src={browserUrl}
+                        allowpopups={true}
+                        className="size-full"
+                        style={{ width: "100%", height: "100%", display: "flex" }}
+                      />
+                    ) : (
+                      <iframe
+                        ref={iframeRef}
+                        src={browserUrl}
+                        className="size-full"
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                        title="Agent browser"
+                      />
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </section>
 
-            <PaneSplitter
-              onResize={(deltaPx, panelHeight) => {
-                if (panelHeight <= 0) return;
-                const next = Math.min(
-                  80,
-                  Math.max(20, rightTopHeightPct + (deltaPx / panelHeight) * 100),
-                );
-                setRightTopHeightPct(next);
-                if (typeof window !== "undefined") {
-                  window.localStorage.setItem(RIGHT_TOP_HEIGHT_KEY, String(Math.round(next)));
-                }
-              }}
-            />
-
-            <div
-              className="flex min-h-0 flex-1 flex-col"
-              style={{ height: `${100 - rightTopHeightPct}%` }}
-            >
-              <div className="flex h-9 shrink-0 items-center justify-between border-b border-(--border) px-3 text-xs text-(--dim)">
+            <section className={`flex min-h-0 flex-col ${filesOpen ? "flex-1" : "shrink-0"}`}>
+              <button
+                type="button"
+                onClick={toggleFilesOpen}
+                aria-expanded={filesOpen}
+                className="flex h-9 shrink-0 items-center gap-2 border-b border-(--border) px-3 text-xs text-(--dim) hover:text-(--fg)"
+              >
+                {filesOpen ? (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5" />
+                )}
                 <span className="font-medium uppercase tracking-wide">Files</span>
-              </div>
-              <div className="min-h-0 flex-1">
-                <FilesystemPanel cwd={activeProject?.path ?? null} />
-              </div>
-            </div>
+              </button>
+              {filesOpen ? (
+                <div className="min-h-0 flex-1">
+                  <FilesystemPanel cwd={activeProject?.path ?? null} />
+                </div>
+              ) : null}
+            </section>
           </aside>
         ) : null}
       </div>
@@ -1147,43 +1241,90 @@ function ProjectRow({
   );
 }
 
-// Vertical drag handle separating two stacked panes inside a flex column.
-// Reports the cursor delta (in CSS px) and the parent panel's measured height
-// so the caller can convert to a percentage for layout.
-function PaneSplitter({
-  onResize,
+function ModelPicker({
+  models,
+  selectedModel,
+  onSelect,
+  loading,
 }: {
-  onResize: (deltaPx: number, panelHeight: number) => void;
+  models: AgentModel[];
+  selectedModel: string;
+  onSelect: (id: string) => void;
+  loading: boolean;
 }) {
-  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startY = event.clientY;
-    const aside = (event.currentTarget.parentElement as HTMLElement | null);
-    const panelHeight = aside?.getBoundingClientRect().height ?? 0;
-    let lastY = startY;
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const active = models.find((model) => model.id === selectedModel) || null;
 
-    const onMove = (e: PointerEvent) => {
-      const delta = e.clientY - lastY;
-      lastY = e.clientY;
-      onResize(delta, panelHeight);
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  };
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(event: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const triggerLabel = loading
+    ? "Loading…"
+    : active?.name || (models.length === 0 ? "No models" : "Select model");
+  const disabled = loading || models.length === 0;
 
   return (
-    <div
-      role="separator"
-      aria-orientation="horizontal"
-      onPointerDown={handlePointerDown}
-      className="h-1.5 shrink-0 cursor-row-resize border-y border-(--border) bg-(--bg) hover:bg-(--surface)"
-      title="Drag to resize"
-    />
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => {
+          if (disabled) return;
+          setOpen((value) => !value);
+        }}
+        disabled={disabled}
+        className="inline-flex h-7 items-center gap-1.5 rounded border border-(--border) bg-(--surface) px-2 text-xs text-(--fg) hover:bg-(--bg) disabled:opacity-60"
+        title={active?.name || triggerLabel}
+      >
+        <Cpu className="h-3.5 w-3.5 shrink-0 text-(--dim)" />
+        <span className="max-w-[160px] truncate">{triggerLabel}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 text-(--dim)" />
+      </button>
+      {open ? (
+        <div className="absolute right-0 top-9 z-50 w-72 rounded-md border border-(--border) bg-(--surface) shadow-lg">
+          <div className="max-h-72 overflow-y-auto p-1">
+            {models.map((model) => {
+              const isActive = model.id === selectedModel;
+              const ctxLabel = model.contextWindow
+                ? `${Math.round(model.contextWindow / 1024)}k`
+                : null;
+              return (
+                <button
+                  key={model.id}
+                  type="button"
+                  onClick={() => {
+                    onSelect(model.id);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-(--bg) ${
+                    isActive ? "bg-(--bg)" : ""
+                  }`}
+                >
+                  <Cpu className="h-3.5 w-3.5 shrink-0 text-(--dim)" />
+                  <span className="min-w-0 flex-1 truncate text-left text-(--fg)">
+                    {model.name}
+                  </span>
+                  {model.reasoning ? (
+                    <span className="shrink-0 text-[10px] text-(--dim)">· reasoning</span>
+                  ) : null}
+                  {ctxLabel ? (
+                    <span className="shrink-0 text-[10px] text-(--dim)">· {ctxLabel}</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
-
-
