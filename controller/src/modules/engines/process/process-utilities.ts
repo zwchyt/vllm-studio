@@ -45,7 +45,15 @@ export const detectBackend = (args: string[]): Backend | null => {
   if (joined.includes("vllm.entrypoints.openai.api_server")) {
     return "vllm";
   }
-  if (joined.includes("vllm") && joined.includes("serve")) {
+  const vllmToken = args.some(
+    (a) =>
+      a === "vllm" ||
+      a.endsWith("/vllm") ||
+      a.endsWith("\\vllm") ||
+      a.endsWith("vllm.exe") ||
+      a.startsWith("vllm."),
+  );
+  if (vllmToken && (args.includes("serve") || joined.includes(" serve "))) {
     return "vllm";
   }
   if (joined.includes("sglang.launch_server")) {
