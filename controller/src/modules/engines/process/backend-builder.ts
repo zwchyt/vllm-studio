@@ -1,5 +1,5 @@
 // CRITICAL
-import { existsSync } from "node:fs";
+import { existsSync, statSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Recipe } from "../../models/types";
 import type { Config } from "../../../config/env";
@@ -520,6 +520,48 @@ const appendLlamacppArguments = (
   return command;
 };
 
+const GGUF_EXTENSION = ".gguf";
+
+/**
+ * Resolve model path for llama.cpp:
+ * - If path is a directory, scan for a single .gguf file inside
+ * - If path is a .gguf file, use as-is
+ * - Otherwise throw a clear error
+ */
+const resolveLlamacppModelPath = (modelPath: string): string => {
+  if (!existsSync(modelPath)) {
+    throw new Error(
+      `Model path not found: "${modelPath}". ` +
+      "Provide the full path to a .gguf file or a directory containing one.",
+    );
+  }
+
+  const stat = statSync(modelPath);
+  if (!stat.isDirectory()) {
+    return modelPath;
+  }
+
+  const entries = readdirSync(modelPath);
+  const ggufFiles = entries.filter((f) => f.toLowerCase().endsWith(GGUF_EXTENSION));
+
+  if (ggufFiles.length === 0) {
+    throw new Error(
+      `No .gguf files found in "${modelPath}". ` +
+      "llama.cpp requires a .gguf model file. Place one in this directory " +
+      "or point Model Path directly to the .gguf file.",
+    );
+  }
+
+  if (ggufFiles.length > 1) {
+    throw new Error(
+      `Multiple .gguf files found in "${modelPath}": ${ggufFiles.join(", ")}. ` +
+      "Set Model Path to the exact .gguf file path instead of the directory.",
+    );
+  }
+
+  return join(modelPath, ggufFiles[0]!);
+};
+
 /**
  * Build a llama.cpp launch command.
  * @param recipe - Recipe data.
@@ -528,7 +570,11 @@ const appendLlamacppArguments = (
  */
 export const buildLlamacppCommand = (recipe: Recipe, config: Config): string[] => {
   const command: string[] = [resolveLlamaBinary(recipe, config)];
-  command.push("--model", recipe.model_path, "--host", recipe.host, "--port", String(recipe.port));
+  if (!recipe.model_path) {
+    throw new Error("model_path is required for llama.cpp backend");
+  }
+  const modelPath = resolveLlamacppModelPath(recipe.model_path);
+  command.push("--model", modelPath, "--host", recipe.host ?? "127.0.0.1", "--port", String(recipe.port));
 
   if (recipe.served_model_name) {
     command.push("--alias", recipe.served_model_name);

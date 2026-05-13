@@ -46,10 +46,14 @@ export const getGpuInfoFromNvidiaSmi = (): GpuInfo[] => {
         powerDraw,
         powerLimit,
       ] = parts;
+      const toSafeNumber = (value: string | undefined): number => {
+        const n = Number(value ?? NaN);
+        return Number.isFinite(n) ? n : 0;
+      };
       const toBytes = (megabytes: string | undefined): number =>
-        Math.max(0, Math.round(Number(megabytes ?? 0) * 1024 * 1024));
+        Math.max(0, Math.round(toSafeNumber(megabytes) * 1024 * 1024));
       const toMb = (megabytes: string | undefined): number =>
-        Math.max(0, Math.round(Number(megabytes ?? 0)));
+        Math.max(0, Math.round(toSafeNumber(megabytes)));
       return {
         index,
         name: name ?? "Unknown",
@@ -59,12 +63,12 @@ export const getGpuInfoFromNvidiaSmi = (): GpuInfo[] => {
         memory_used_mb: toMb(memoryUsed),
         memory_free: toBytes(memoryFree),
         memory_free_mb: toMb(memoryFree),
-        utilization: Number(utilization ?? 0),
-        utilization_pct: Number(utilization ?? 0),
-        temperature: Number(temperature ?? 0),
-        temp_c: Number(temperature ?? 0),
-        power_draw: Number(powerDraw ?? 0),
-        power_limit: Number(powerLimit ?? 0),
+        utilization: toSafeNumber(utilization),
+        utilization_pct: toSafeNumber(utilization),
+        temperature: toSafeNumber(temperature),
+        temp_c: toSafeNumber(temperature),
+        power_draw: toSafeNumber(powerDraw),
+        power_limit: toSafeNumber(powerLimit),
       };
     });
   } catch {

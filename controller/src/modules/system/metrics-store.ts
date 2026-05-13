@@ -2,6 +2,12 @@
 import type { Database } from "bun:sqlite";
 import { openSqliteDatabase } from "../../stores/sqlite";
 
+const safeFinite = (v: number | undefined | null, fallback = 0): number =>
+  v !== undefined && v !== null && Number.isFinite(v) ? v : fallback;
+
+const isFiniteVal = (v: number | undefined): v is number =>
+  v !== undefined && Number.isFinite(v);
+
 /**
  *
  */
@@ -63,32 +69,32 @@ export class PeakMetricsStore {
 
     if (current) {
       if (
-        prefillTps !== undefined &&
-        (current["prefill_tps"] === null || Number(prefillTps) > Number(current["prefill_tps"]))
+        isFiniteVal(prefillTps) &&
+        (current["prefill_tps"] === null || prefillTps > Number(current["prefill_tps"]))
       ) {
         updates["prefill_tps"] = prefillTps;
       }
       if (
-        generationTps !== undefined &&
+        isFiniteVal(generationTps) &&
         (current["generation_tps"] === null ||
-          Number(generationTps) > Number(current["generation_tps"]))
+          generationTps > Number(current["generation_tps"]))
       ) {
         updates["generation_tps"] = generationTps;
       }
       if (
-        ttftMs !== undefined &&
-        (current["ttft_ms"] === null || Number(ttftMs) < Number(current["ttft_ms"]))
+        isFiniteVal(ttftMs) &&
+        (current["ttft_ms"] === null || ttftMs < Number(current["ttft_ms"]))
       ) {
         updates["ttft_ms"] = ttftMs;
       }
     } else {
-      if (prefillTps !== undefined) {
+      if (isFiniteVal(prefillTps)) {
         updates["prefill_tps"] = prefillTps;
       }
-      if (generationTps !== undefined) {
+      if (isFiniteVal(generationTps)) {
         updates["generation_tps"] = generationTps;
       }
-      if (ttftMs !== undefined) {
+      if (isFiniteVal(ttftMs)) {
         updates["ttft_ms"] = ttftMs;
       }
     }
@@ -141,7 +147,7 @@ export class PeakMetricsStore {
         updated_at = CURRENT_TIMESTAMP
     `
       )
-      .run(modelId, tokens, requests);
+      .run(modelId, safeFinite(tokens), safeFinite(requests, 1));
   }
 
   /**
@@ -231,7 +237,7 @@ export class LifetimeMetricsStore {
        VALUES (?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
       )
-      .run(key, value);
+      .run(key, safeFinite(value));
   }
 
   /**
@@ -240,13 +246,15 @@ export class LifetimeMetricsStore {
    * @param delta
    */
   public increment(key: string, delta: number): number {
+    const d = safeFinite(delta);
+    if (d === 0) return this.get(key);
     this.db
       .query(
         `INSERT INTO lifetime_metrics (key, value, updated_at)
        VALUES (?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(key) DO UPDATE SET value = value + excluded.value, updated_at = CURRENT_TIMESTAMP`
       )
-      .run(key, delta);
+      .run(key, d);
     return this.get(key);
   }
 

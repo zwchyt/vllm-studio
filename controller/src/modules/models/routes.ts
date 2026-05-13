@@ -1,8 +1,11 @@
 // CRITICAL
 import type { Hono } from "hono";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+
+const isAbsolutePath = (p: string): boolean =>
+  p.startsWith("/") || /^[A-Za-z]:[/\\]/.test(p);
 import type { AppContext } from "../../types/context";
 import type { Recipe } from "../models/types";
 
@@ -25,7 +28,7 @@ interface OpenAIModelList {
   object: "list";
   data: OpenAIModelInfo[];
 }
-import { buildModelInfo, discoverModelDirectories } from "./model-browser";
+import { buildGgufModelInfo, buildModelInfo, discoverGgufFiles, discoverModelDirectories } from "./model-browser";
 import { notFound } from "../../core/errors";
 import { fetchInference } from "../../services/inference/inference-client";
 
@@ -193,7 +196,7 @@ export const registerModelsRoutes = (app: Hono, context: AppContext): void => {
       const existingNames = recipesByBasename.get(name) ?? [];
       existingNames.push(recipe.id);
       recipesByBasename.set(name, existingNames);
-      if (modelPath.startsWith("/")) {
+      if (isAbsolutePath(modelPath)) {
         const canonical = expandUserPath(modelPath);
         const existingPaths = recipesByPath.get(canonical) ?? [];
         existingPaths.push(recipe.id);
@@ -225,11 +228,11 @@ export const registerModelsRoutes = (app: Hono, context: AppContext): void => {
 
     for (const recipe of recipes) {
       const modelPath = recipe.model_path?.trim();
-      if (!modelPath || !modelPath.startsWith("/")) {
+      if (!modelPath || !isAbsolutePath(modelPath)) {
         continue;
       }
       const parent = dirname(expandUserPath(modelPath));
-      if (parent === "/") {
+      if (parent === "/" || (/^[A-Za-z]:[/\\]$/.test(parent))) {
         continue;
       }
       addRoot(parent, "recipe_parent", recipe.id);
@@ -240,9 +243,19 @@ export const registerModelsRoutes = (app: Hono, context: AppContext): void => {
     );
     const scanRoots = roots.filter((root) => root.exists).map((root) => root.path);
 
-    const modelDirectories = discoverModelDirectories(scanRoots, 2, 1000);
+    const modelDirsSet = new Set(discoverModelDirectories(scanRoots, 2, 1000));
+    const ggufPathsSet = new Set<string>();
+    for (const root of scanRoots) {
+      const rootDir = resolve(root);
+      if (modelDirsSet.has(rootDir)) continue;
+      for (const ggufPath of discoverGgufFiles(rootDir)) {
+        const ggufDir = dirname(ggufPath);
+        if (!modelDirsSet.has(ggufDir)) ggufPathsSet.add(ggufPath);
+      }
+    }
+
     const models = [];
-    for (const directory of modelDirectories) {
+    for (const directory of modelDirsSet) {
       const canonical = resolve(directory);
       let recipeIds = recipesByPath.get(canonical) ?? [];
       if (recipeIds.length === 0) {
@@ -253,6 +266,11 @@ export const registerModelsRoutes = (app: Hono, context: AppContext): void => {
       }
       const info = await buildModelInfo(directory, recipeIds);
       models.push(info);
+    }
+    for (const ggufPath of ggufPathsSet) {
+      const canonical = resolve(ggufPath);
+      const recipeIds = recipesByPath.get(canonical) ?? [];
+      models.push(buildGgufModelInfo(ggufPath, recipeIds));
     }
     models.sort((left, right) =>
       String(left.name).toLowerCase().localeCompare(String(right.name).toLowerCase())

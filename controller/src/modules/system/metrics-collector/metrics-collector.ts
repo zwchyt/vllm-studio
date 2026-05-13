@@ -242,7 +242,10 @@ export const startMetricsCollector = (context: AppContext): (() => void) => {
       context.metrics.updateSseMetrics(context.eventManager.getStats());
 
       const lifetimeStore = context.stores.lifetimeMetricsStore;
-      const totalPowerWatts = gpuList.reduce((sum, gpu) => sum + gpu.power_draw, 0);
+      const totalPowerWatts = gpuList.reduce((sum, gpu) => {
+        const pd = Number(gpu.power_draw);
+        return sum + (Number.isFinite(pd) ? pd : 0);
+      }, 0);
       const energyWh = totalPowerWatts * (5 / 3600);
       lifetimeStore.increment("energy_wh", energyWh);
       lifetimeStore.increment("uptime_seconds", METRICS_LIFETIME_UPTIME_INCREMENT_SECONDS);

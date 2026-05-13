@@ -44,7 +44,7 @@ const isExecutableFile = (filePath: string): boolean => {
 export const resolveBinary = (binaryName: string): string | null => {
   if (!binaryName) return null;
 
-  if (binaryName.includes("/")) {
+  if (binaryName.includes("/") || binaryName.includes("\\")) {
     const resolved = resolve(binaryName);
     return isExecutableFile(resolved) ? resolved : null;
   }
@@ -58,7 +58,8 @@ export const resolveBinary = (binaryName: string): string | null => {
 
   const pathValue = process.env["PATH"];
   if (pathValue) {
-    for (const entry of pathValue.split(":")) {
+    const separator = process.platform === "win32" ? ";" : ":";
+    for (const entry of pathValue.split(separator)) {
       if (entry) searchPaths.push(entry);
     }
   }
@@ -78,6 +79,10 @@ export const resolveBinary = (binaryName: string): string | null => {
   for (const entry of searchPaths) {
     const candidate = join(entry, binaryName);
     if (isExecutableFile(candidate)) return candidate;
+    if (process.platform === "win32") {
+      const withExt = candidate + ".exe";
+      if (isExecutableFile(withExt)) return withExt;
+    }
   }
 
   return null;

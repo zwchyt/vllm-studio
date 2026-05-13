@@ -1,6 +1,6 @@
 // CRITICAL
 import { statSync, existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ModelInfo } from "./types";
 import {
   MODEL_BROWSER_CONFIG_FILENAMES,
@@ -172,6 +172,54 @@ export const discoverModelDirectories = (
 };
 
 /**
+ * Discover standalone .gguf files in a directory (single-file models).
+ * @param directory - Directory to scan.
+ * @returns List of full paths to .gguf files.
+ */
+export const discoverGgufFiles = (directory: string): string[] => {
+  if (!existsSync(directory)) return [];
+  try {
+    const entries = readdirSync(directory, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".gguf"))
+      .map((entry) => join(directory, entry.name))
+      .sort();
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Build model info for a single .gguf file.
+ * @param ggufPath - Full path to .gguf file.
+ * @param recipeIds - Associated recipe ids.
+ * @returns Model info.
+ */
+export const buildGgufModelInfo = (ggufPath: string, recipeIds: string[] = []): ModelInfo => {
+  let sizeBytes: number | null = null;
+  let modifiedAt: number | null = null;
+  try {
+    const stats = statSync(ggufPath);
+    sizeBytes = stats.size;
+    modifiedAt = stats.mtimeMs;
+  } catch {
+    // fall through
+  }
+  const name = basename(ggufPath);
+  return {
+    name,
+    path: ggufPath,
+    size_bytes: sizeBytes,
+    modified_at: modifiedAt,
+    architecture: null,
+    quantization: "gguf",
+    context_length: null,
+    recipe_ids: [...new Set(recipeIds)].sort(),
+    has_recipe: recipeIds.length > 0,
+  };
+};
+
+/**
  * Build model info object for a directory.
  * @param modelDirectory - Model directory.
  * @param recipeIds - Associated recipe ids.
@@ -185,7 +233,7 @@ export const buildModelInfo = async (modelDirectory: string, recipeIds: string[]
   } catch {
     modifiedAt = undefined;
   }
-  const name = modelDirectory.split("/").pop() ?? modelDirectory;
+  const name = basename(modelDirectory);
   return {
     name,
     path: modelDirectory,
