@@ -97,11 +97,11 @@ Open the **Agent** workspace, select a model, and start chatting. The coding age
 
 ## Configuration
 
-Copy `.env.example` to `.env.local` in the project root and edit as needed:
+Create a `.env` file in the project `controller` directory and edit it as needed:
 
 ```bash
-# On Windows (PowerShell)
-Copy-Item .env.example .env.local
+# Default configuration: VLLM_STUDIO_LLAMA_BIN = your llama-server.exe file path
+.env
 ```
 
 | Variable | Default | Description |
@@ -116,7 +116,7 @@ Copy-Item .env.example .env.local
 | `VLLM_STUDIO_MOCK_INFERENCE` | *(unset)* | Set `true` for testing without a real model |
 | `OPENAI_MODEL_ACTIVATION_POLICY` | `load_if_idle` | `load_if_idle` or `switch_on_request` |
 
-> **Note for Windows**: All paths in `.env.local` should use Windows format, e.g. `VLLM_STUDIO_LLAMA_BIN=F:\llama-b9016\llama-server.exe`.
+> **Note for Windows**: All paths in `.env` should use Windows format, e.g. `VLLM_STUDIO_LLAMA_BIN = your llama-server.exe file path`.
 
 ## Repository Layout
 
