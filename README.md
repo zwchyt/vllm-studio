@@ -57,20 +57,21 @@ Open `http://localhost:3000` for the dashboard.
 
 ### 3. Load a model
 
-Create a `models\` folder in the project root directory, then organize each model in its own subfolder:
+Create a `models\` folder on the drive root (outside the project directory), with one subfolder per model:
 
 ```
-E:\vllm-studio\             ← project root
-├── controller\
-├── frontend\
-├── models\                 ← create this folder
-│   ├── Qwen-7B-Q4_K_M\    ← one folder per model
+E:\                          ← E drive root
+├── models\                  ← create this folder
+│   ├── Qwen-7B-Q4_K_M\     ← one folder per model
 │   │   └── Qwen-7B-Q4_K_M.gguf
 │   ├── DeepSeek-R1-Q4_K_M\
 │   │   └── DeepSeek-R1-Q4_K_M.gguf
 │   └── ...
-├── scripts\
-└── ...
+└── vllm-studio\             ← project root
+    ├── controller\
+    ├── frontend\
+    ├── scripts\
+    └── ...
 ```
 
 > The controller will auto-resolve a directory containing exactly one `.gguf` file, so you only need to point `model_path` to the model's folder.
@@ -81,8 +82,8 @@ Then create a recipe to register the model with the system:
 2. **Name**: e.g. `Qwen 7B`
 3. **Backend**: select `llama.cpp`
 4. **Model Path**: point to the model's folder
-   - Example: `E:\vllm-studio\models\Qwen-7B-Q4_K_M\`
-   - Or directly to the `.gguf` file: `E:\vllm-studio\models\Qwen-7B-Q4_K_M\Qwen-7B-Q4_K_M.gguf`
+   - Example: `E:\models\Qwen-7B-Q4_K_M\`
+   - Or directly to the `.gguf` file: `E:\models\Qwen-7B-Q4_K_M\Qwen-7B-Q4_K_M.gguf`
 5. **Served Model Name**: optional display name for the model
 6. Save the recipe, then click **Launch** on the recipe page
 
