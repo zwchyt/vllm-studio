@@ -57,10 +57,35 @@ Open `http://localhost:3000` for the dashboard.
 
 ### 3. Load a model
 
+Place model files in the project directory (e.g. `E:\vllm-studio\models\`):
+
+```
+E:\vllm-studio\models\
+  Qwen-7B-Q4_K_M.gguf
+  DeepSeek-R1-Q4_K_M.gguf
+  ...
+```
+
+You can also organize models in subdirectories — the controller will auto-resolve a directory containing exactly one `.gguf` file:
+
+```
+E:\vllm-studio\models\
+  Qwen-7B-Q4_K_M\
+    Qwen-7B-Q4_K_M.gguf
+```
+
+Then create a recipe to register the model with the system:
+
 1. Go to **Recipes** → **New Recipe**
-2. Set backend to `llama.cpp`, point `model_path` to your `.gguf` file or directory
-3. Save and launch from the recipe page
-4. Or use the **Discover** page to auto-detect GGUF files on disk
+2. **Name**: e.g. `Qwen 7B`
+3. **Backend**: select `llama.cpp`
+4. **Model Path**: point to your `.gguf` file path or the directory containing it
+   - Example: `E:\vllm-studio\models\Qwen-7B-Q4_K_M.gguf`
+   - Or a directory: `E:\vllm-studio\models\Qwen-7B-Q4_K_M\`
+5. **Served Model Name**: optional display name for the model
+6. Save the recipe, then click **Launch** on the recipe page
+
+Alternatively, use the **Discover** page to auto-scan a directory and create recipes for all detected GGUF files at once.
 
 ### 4. Chat with the agent
 
