@@ -191,6 +191,7 @@ class PiRpcSession extends EventEmitter {
       cwd,
       env: launchPlan.env,
       stdio: ["pipe", "pipe", "pipe"],
+      shell: process.platform === "win32",
     });
 
     this.process = child;

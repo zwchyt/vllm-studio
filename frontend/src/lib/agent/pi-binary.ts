@@ -49,65 +49,27 @@ const localBinDirs = (): string[] =>
     path.join(homedir(), "bin"),
   ]);
 
+const PI_SCOPES = ["@mariozechner", "@earendil-works"] as const;
+
+const piScopePaths = (scope: string): (string | null)[] => [
+  resourcesPath()
+    ? path.join(resourcesPath()!, "app", "frontend", ".next", "standalone", "node_modules", scope, "pi-coding-agent", "dist", "cli.js")
+    : null,
+  resourcesPath()
+    ? path.join(resourcesPath()!, "app.asar", "node_modules", scope, "pi-coding-agent", "dist", "cli.js")
+    : null,
+  resourcesPath()
+    ? path.join(resourcesPath()!, "app", "node_modules", scope, "pi-coding-agent", "dist", "cli.js")
+    : null,
+  path.join(process.cwd(), "node_modules", scope, "pi-coding-agent", "dist", "cli.js"),
+  path.join(process.cwd(), "frontend", "node_modules", scope, "pi-coding-agent", "dist", "cli.js"),
+  path.join(process.cwd(), "..", "frontend", "node_modules", scope, "pi-coding-agent", "dist", "cli.js"),
+];
+
 const localCliFiles = (): string[] =>
-  unique([
-    resourcesPath()
-      ? path.join(
-          resourcesPath()!,
-          "app",
-          "frontend",
-          ".next",
-          "standalone",
-          "node_modules",
-          "@mariozechner",
-          "pi-coding-agent",
-          "dist",
-          "cli.js",
-        )
-      : null,
-    resourcesPath()
-      ? path.join(
-          resourcesPath()!,
-          "app.asar",
-          "node_modules",
-          "@mariozechner",
-          "pi-coding-agent",
-          "dist",
-          "cli.js",
-        )
-      : null,
-    resourcesPath()
-      ? path.join(
-          resourcesPath()!,
-          "app",
-          "node_modules",
-          "@mariozechner",
-          "pi-coding-agent",
-          "dist",
-          "cli.js",
-        )
-      : null,
-    path.join(process.cwd(), "node_modules", "@mariozechner", "pi-coding-agent", "dist", "cli.js"),
-    path.join(
-      process.cwd(),
-      "frontend",
-      "node_modules",
-      "@mariozechner",
-      "pi-coding-agent",
-      "dist",
-      "cli.js",
-    ),
-    path.join(
-      process.cwd(),
-      "..",
-      "frontend",
-      "node_modules",
-      "@mariozechner",
-      "pi-coding-agent",
-      "dist",
-      "cli.js",
-    ),
-  ]);
+  unique(
+    PI_SCOPES.flatMap((scope) => piScopePaths(scope)),
+  );
 
 export function piPathEnv(): string {
   return unique([...localBinDirs(), process.env.PATH]).join(path.delimiter);
