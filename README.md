@@ -55,7 +55,7 @@ bun install
 npm run dev
 ```
 
-Open `http://localhost:3000` for the dashboard.
+Open egde `http://localhost:3000` for the dashboard.
 
 ### 3. Load a model
 
