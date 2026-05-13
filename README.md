@@ -97,14 +97,26 @@ Open the **Agent** workspace, select a model, and start chatting. The coding age
 
 ## Configuration
 
-Key environment variables (set in `.env.local` or system env):
+Copy `.env.example` to `.env.local` in the project root and edit as needed:
+
+```bash
+# On Windows (PowerShell)
+Copy-Item .env.example .env.local
+```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VLLM_STUDIO_LLAMA_BIN` | *(auto)* | Path to `llama-server` binary |
-| `VLLM_STUDIO_PI_BINARY` | *(auto)* | Path to Pi agent binary |
-| `INFERENCE_PORT` | `8000` | Port for the inference backend |
+| `VLLM_STUDIO_LLAMA_BIN` | *(auto)* | Path to `llama-server.exe` binary. Set if not on PATH. |
+| `VLLM_STUDIO_PI_BINARY` | *(auto)* | Path to Pi agent binary (`pi.cmd`). |
+| `VLLM_STUDIO_HOST` | `127.0.0.1` | Controller bind address |
+| `VLLM_STUDIO_PORT` | `8080` | Controller port |
+| `VLLM_STUDIO_INFERENCE_PORT` | `8000` | Port for the inference backend |
+| `VLLM_STUDIO_MODELS_DIR` | `/models` | Default directory for model scanning |
+| `VLLM_STUDIO_DATA_DIR` | `./data` | Data directory for recipes, chat history |
+| `VLLM_STUDIO_MOCK_INFERENCE` | *(unset)* | Set `true` for testing without a real model |
 | `OPENAI_MODEL_ACTIVATION_POLICY` | `load_if_idle` | `load_if_idle` or `switch_on_request` |
+
+> **Note for Windows**: All paths in `.env.local` should use Windows format, e.g. `VLLM_STUDIO_LLAMA_BIN=F:\llama-b9016\llama-server.exe`.
 
 ## Repository Layout
 
