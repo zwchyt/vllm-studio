@@ -41,6 +41,7 @@ Agent      (Pi agent binary)  →  Controller proxy → Inference backend
 
 ```bash
 cd controller
+bun install
 bun src/main.ts
 ```
 
@@ -50,6 +51,7 @@ The controller listens on `http://localhost:8080`. It manages model processes an
 
 ```bash
 cd frontend
+bun install
 npm run dev
 ```
 
