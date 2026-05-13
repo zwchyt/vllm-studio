@@ -1,95 +1,100 @@
 # vLLM Studio
 
-Unified local AI workstation for model lifecycle, chat/agent workflows, orchestration, observability, and remote deployment.
+Windows-first unified local AI workstation. Manage models, run chat/agent sessions, monitor performance — all through a local web UI.
 
-## Release: v1.13.0
+> Fork of [sybil-solutions/vllm-studio](https://github.com/sybil-solutions/vllm-studio) with **Windows compatibility** and **llama.cpp** as the primary inference backend.
 
-This release consolidates major repo changes currently in the tree, including:
+## Architecture
 
-- OpenAI proxy activation policy controls for `load_if_idle` and `switch_on_request`
-- lifecycle-aware run aborts when model eviction happens
-- SSE run stream termination fixes across backend and frontend
-- local-only chat/runtime cleanup and controller simplification
-- dashboard launch-state cleanup improvements
-- reduced chat/controller indirection and removed dead remote-runtime branches
+```
+Controller (Bun/Hono :8080)  →  llama.cpp / vLLM / SGLang
+Frontend   (Next.js   :3000)  →  Controller API
+Agent      (Pi agent binary)  →  Controller proxy → Inference backend
+```
 
-## Docs
+| Component | Stack | Role |
+|-----------|-------|------|
+| **Controller** | Bun + Hono | Model lifecycle, OpenAI proxy, metrics, process management |
+| **Frontend** | Next.js 16 | Dashboard, chat workspace, model browser, settings |
+| **Agent** | `pi-coding-agent` | Coding agent with file system, browser, git tools |
+| **Inference** | llama.cpp / vLLM | Model serving via OpenAI-compatible API |
 
-- Overview: docs/README.md
-- Setup and deployment: docs/operations.md
-- Environment variables: docs/environment.md
+## Features
 
-## Repository layout
+- **Dashboard** — Real-time metrics (decode speed, TTFT, prefill), GPU utilization, model status
+- **Agent Workspace** — Multi-pane chat with coding agent, file browser, git diff viewer, timeline
+- **Model Management** — Recipe-based model config, GGUF auto-discovery, directory scanning
+- **OpenAI Proxy** — `/v1/chat/completions`, tokenization, model listing with activation policy
+- **Process Lifecycle** — Auto-launch models on request, switch on demand, GPU lease management
+- **Remote Deploy** — SSH-based deployment to GPU servers (see `scripts/deploy-remote.sh`)
 
-- `controller/`: Bun/Hono backend, orchestration, chat runtime, lifecycle, metrics
-- `frontend/`: Next.js app, chat UI, proxy endpoints, client state
-- `cli/`: Bun CLI for controller access
-- `shared/`: shared types/contracts
-- `config/`: runtime and integration configs
-- `docs/`: documentation index and environment notes
-- `scripts/`: operational scripts (deployment + controller daemon helpers)
-- `docker-compose.yml`: full stack service definitions
-- `scripts/daemon-*.sh`: start/status/stop helpers for background controller runs
+## Quick Start
 
-## Quick start
+### Prerequisites
 
-1. Controller (local):
+- [Bun](https://bun.sh) 1.3+
+- [Node.js](https://nodejs.org) 20+ (for frontend)
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) server binary (`llama-server.exe` on Windows)
+- GGUF model files (e.g. from Hugging Face)
+
+### 1. Start the controller
 
 ```bash
 cd controller
-npx tsc --noEmit
-bun test
 bun src/main.ts
 ```
 
-2. Frontend:
+The controller listens on `http://localhost:8080`. It manages model processes and proxies inference requests.
+
+### 2. Start the frontend
 
 ```bash
 cd frontend
-npm run test
-npm run lint
-npm run build
 npm run dev
 ```
 
-3. Full stack with Docker (controller + frontend + infra):
+Open `http://localhost:3000` for the dashboard.
 
-```bash
-docker compose up -d --build controller frontend
+### 3. Load a model
+
+1. Go to **Recipes** → **New Recipe**
+2. Set backend to `llama.cpp`, point `model_path` to your `.gguf` file or directory
+3. Save and launch from the recipe page
+4. Or use the **Discover** page to auto-detect GGUF files on disk
+
+### 4. Chat with the agent
+
+Open the **Agent** workspace, select a model, and start chatting. The coding agent has access to file system, browser automation, and git diff tools.
+
+## Configuration
+
+Key environment variables (set in `.env.local` or system env):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VLLM_STUDIO_LLAMA_BIN` | *(auto)* | Path to `llama-server` binary |
+| `VLLM_STUDIO_PI_BINARY` | *(auto)* | Path to Pi agent binary |
+| `INFERENCE_PORT` | `8000` | Port for the inference backend |
+| `OPENAI_MODEL_ACTIVATION_POLICY` | `load_if_idle` | `load_if_idle` or `switch_on_request` |
+
+## Repository Layout
+
+```
+controller/        Bun/Hono backend — orchestration, proxy, metrics, process management
+frontend/          Next.js app — dashboard, chat workspace, agent UI, settings
+cli/               Bun CLI for controller access
+config/            Runtime and integration configs
+docs/              Documentation
+scripts/           Deployment and operational scripts (remote deploy helpers)
 ```
 
-4. Run controller as a background daemon:
+## Health Checks
 
 ```bash
-./scripts/daemon-start.sh
-./scripts/daemon-status.sh
-./scripts/daemon-stop.sh
-```
-
-## Health checks
-
-```bash
-curl -sS http://localhost:8080/health
+curl http://localhost:8080/status
 curl -I http://localhost:3000
 ```
 
-## API docs
+## License
 
-- http://localhost:8080/api/docs
-- http://localhost:8080/api/spec
-
-## Setup guide
-
-See `docs/operations.md` for setup, deployment, and verification instructions.
-
-## Branching and release workflow
-
-- Development branch: `dev`
-- Production integration branch: `main`
-- Release tags: `vX.Y.Z`
-
-For this release:
-
-- merge release work into `main` and `dev`
-- tag `v1.13.0`
-- create a new post-release working branch
+Apache License 2.0
