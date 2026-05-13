@@ -14,6 +14,7 @@ import { useProjects, type ProjectsContextValue } from "@/lib/agent/projects/con
 import { useTools } from "@/lib/agent/tools/context";
 import type { Project } from "@/lib/agent/projects/types";
 import { focusedSession, materializePaneSessions } from "@/lib/agent/sessions/selectors";
+import { useRealtimeStatusStore } from "@/hooks/realtime-status-store";
 import { AgentBrowserPanel } from "./agent-browser-panel";
 import { ChatPane } from "./chat-pane";
 import { PaneGrid } from "./pane-grid";
@@ -80,6 +81,8 @@ export function AgentWorkspaceShell({ state, dispatch, handles }: AgentWorkspace
   const projects = useProjects();
   const tools = useTools();
   const searchParams = useSearchParams();
+  const realtimeStatus = useRealtimeStatusStore();
+  const currentProcessModelName = realtimeStatus.status?.process?.served_model_name ?? null;
   const projectParam = searchParams.get("project");
 
   useEffect(() => {
@@ -115,7 +118,7 @@ export function AgentWorkspaceShell({ state, dispatch, handles }: AgentWorkspace
               <PaneGrid
                 layout={state.layout}
                 renderPane={(paneId) =>
-                  renderWorkspacePane(paneId, state, projects, tools, dispatch, handles)
+                  renderWorkspacePane(paneId, state, projects, tools, dispatch, handles, currentProcessModelName)
                 }
                 onSplit={handles.splitPaneWithPayload}
                 onOpenTab={handles.openSessionPayloadInPane}
@@ -248,6 +251,7 @@ function renderWorkspacePane(
   tools: ReturnType<typeof useTools>,
   dispatch: WorkspaceDispatch,
   handles: WorkspaceHandles,
+  currentProcessModelName: string | null,
 ) {
   const pane = state.panesById.get(paneId);
   if (!pane) return null;
@@ -260,7 +264,13 @@ function renderWorkspacePane(
   const paneProject = projects.resolveProject(paneActiveTab);
   const paneCwd = paneActiveTab?.cwd ?? paneProject?.path ?? projects.agentCwd;
   const paneModelId = paneActiveTab?.modelId ?? state.selectedModel;
-  const paneModel = state.models.find((model) => model.id === paneModelId) ?? null;
+  const paneModel = (
+    state.models.find((model) => model.id === paneModelId) ??
+    (currentProcessModelName && paneModelId !== currentProcessModelName
+      ? state.models.find((model) => model.id === currentProcessModelName)
+      : null) ??
+    null
+  );
   const paneGitSummary = projects.gitSummary(paneProject?.path);
   const paneGitBranch =
     paneGitSummary?.isRepo === false
