@@ -69,10 +69,47 @@ export const detectBackend = (args: string[]): Backend | null => {
 };
 
 /**
- * List running processes via ps.
+ * List running processes via ps (Unix) or wmic (Windows).
  * @returns Array of pid and args.
  */
 export const listProcesses = (): Array<{ pid: number; args: string[] }> => {
+  const isWindows = process.platform === "win32";
+
+  if (isWindows) {
+    try {
+      const result = spawnSync("wmic", ["process", "get", "ProcessId,CommandLine", "/format:csv"], {
+        timeout: 10_000,
+        encoding: "utf-8",
+        maxBuffer: 50 * 1024 * 1024,
+      });
+      if (result.status !== 0 || !result.stdout) {
+        return [];
+      }
+      const lines = result.stdout.replace(/\r\n/g, "\n").split("\n").filter((line: string) => line.trim());
+      const processes: Array<{ pid: number; args: string[] }> = [];
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line || !line.trim()) continue;
+        const firstComma = line.indexOf(",");
+        const lastComma = line.lastIndexOf(",");
+        if (firstComma < 0 || lastComma <= firstComma) continue;
+        let cmdLine = line.slice(firstComma + 1, lastComma).trim();
+        const pid = Number(line.slice(lastComma + 1).trim());
+        if (Number.isNaN(pid) || pid <= 0 || !cmdLine) continue;
+        if (cmdLine.startsWith('"') && cmdLine.endsWith('"')) {
+          cmdLine = cmdLine.slice(1, -1);
+        }
+        const args = splitCommand(cmdLine);
+        if (args.length > 0) {
+          processes.push({ pid, args });
+        }
+      }
+      return processes;
+    } catch {
+      return [];
+    }
+  }
+
   try {
     const result = spawnSync("ps", ["-eo", "pid=,args="]);
     if (result.status !== 0) {
@@ -265,6 +302,39 @@ export const pidExists = (pid: number): boolean => {
  * @returns Map of parent pid to children.
  */
 export const buildProcessTree = (): Map<number, number[]> => {
+  const isWindows = process.platform === "win32";
+
+  if (isWindows) {
+    try {
+      const result = spawnSync("wmic", ["process", "get", "ProcessId,ParentProcessId", "/format:csv"], {
+        timeout: 10_000,
+        encoding: "utf-8",
+        maxBuffer: 50 * 1024 * 1024,
+      });
+      if (result.status !== 0 || !result.stdout) {
+        return new Map();
+      }
+      const lines = result.stdout.replace(/\r\n/g, "\n").split("\n").filter((line: string) => line.trim());
+      const tree = new Map<number, number[]>();
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line || !line.trim()) continue;
+        const firstComma = line.indexOf(",");
+        const lastComma = line.lastIndexOf(",");
+        if (firstComma < 0 || lastComma <= firstComma) continue;
+        const ppid = Number(line.slice(firstComma + 1, lastComma).trim());
+        const pid = Number(line.slice(lastComma + 1).trim());
+        if (Number.isNaN(pid) || Number.isNaN(ppid) || pid <= 0 || ppid <= 0) continue;
+        const children = tree.get(ppid) ?? [];
+        children.push(pid);
+        tree.set(ppid, children);
+      }
+      return tree;
+    } catch {
+      return new Map();
+    }
+  }
+
   const result = spawnSync("ps", ["-eo", "pid=,ppid="]);
   if (result.status !== 0) {
     return new Map();
